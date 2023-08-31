@@ -2,7 +2,7 @@
 # shellcheck disable=SC2317
 export LOGOS_SCRIPT_TITLE="Logos Linux Installer" # From https://github.com/ferion11/LogosLinuxInstaller
 export LOGOS_SCRIPT_AUTHOR="Ferion11, John Goodman, T. H. Wright"
-export LOGOS_SCRIPT_VERSION="3.7.1" # Script version for this Installer Script
+export LOGOS_SCRIPT_VERSION="3.7.5" # Script version for this Installer Script
 
 #####
 # Originally written by Ferion11.
@@ -16,6 +16,8 @@ if [ -z "${WINE64_APPIMAGE_FULL_URL}" ]; then WINE64_APPIMAGE_FULL_URL="https://
 if [ -z "${WINE64_APPIMAGE_FULL_FILENAME}" ]; then WINE64_APPIMAGE_FULL_FILENAME="$(basename "${WINE64_APPIMAGE_FULL_URL}")"; export WINE64_APPIMAGE_FULL_FILENAME; fi
 if [ -z "${WINE64_APPIMAGE_VERSION}" ]; then WINE64_APPIMAGE_VERSION="v7.18-staging"; export WINE64_APPIMAGE_VERSION; fi
 if [ -z "${WINE64_APPIMAGE_URL}" ]; then WINE64_APPIMAGE_URL="https://github.com/ferion11/LogosLinuxInstaller/releases/download/v10.0-1/wine-staging_7.18-x86_64.AppImage"; export WINE64_APPIMAGE_URL; fi
+if [ -z "${WINE64_BOTTLE_TARGZ_URL}" ]; then WINE64_BOTTLE_TARGZ_URL="https://github.com/ferion11/wine64_bottle_dotnet/releases/download/v5.11b/wine64_bottle.tar.gz"; export WINE64_BOTTLE_TARGZ_URL; fi
+if [ -z "${WINE64_BOTTLE_TARGZ_NAME}" ]; then WINE64_BOTTLE_TARGZ_NAME="wine64_bottle.tar.gz"; export WINE64_BOTTLE_TARGZ_NAME; fi
 if [ -z "${WINE64_APPIMAGE_FILENAME}" ]; then WINE64_APPIMAGE_FILENAME="$(basename "${WINE64_APPIMAGE_URL}" .AppImage)"; export WINE64_APPIMAGE_FILENAME; fi
 if [ -z "${APPIMAGE_LINK_SELECTION_NAME}" ]; then APPIMAGE_LINK_SELECTION_NAME="selected_wine.AppImage"; export APPIMAGE_LINK_SELECTION_NAME; fi
 if [ -z "${WINETRICKS_URL}" ]; then WINETRICKS_URL="https://raw.githubusercontent.com/Winetricks/winetricks/5904ee355e37dff4a3ab37e1573c56cffe6ce223/src/winetricks"; export WINETRICKS_URL; fi
@@ -29,6 +31,7 @@ if [ -z "${LOGOS_FORCE_ROOT+x}" ]; then export LOGOS_FORCE_ROOT="" ; fi
 if [ -z "${WINEBOOT_GUI+x}" ]; then export WINEBOOT_GUI="" ; fi
 if [ -z "${EXTRA_INFO}" ]; then EXTRA_INFO="The following packages are usually necessary: winbind cabextract libjpeg8."; export EXTRA_INFO; fi
 if [ -z "${DEFAULT_CONFIG_PATH}" ]; then DEFAULT_CONFIG_PATH="${HOME}/.config/Logos_on_Linux/Logos_on_Linux.conf"; export DEFAULT_CONFIG_PATH; fi
+if [ -z "${LOGOS_LOG}" ]; then LOGOS_LOG="${HOME}/.local/state/Logos_on_Linux/install.log"; mkdir -p "${HOME}/.local/state/Logos_on_Linux"; touch "${LOGOS_LOG}"; export LOGOS_LOG; fi
 if [ -z "${WINEDEBUG}" ]; then WINEDEBUG="fixme-all,err-all"; fi; export WINEDEBUG # Make wine output less verbose
 if [ -z "${DEBUG}" ]; then DEBUG="FALSE"; fi; export DEBUG
 if [ -z "${VERBOSE}" ]; then VERBOSE="FALSE"; fi; export VERBOSE
@@ -63,6 +66,18 @@ Options:
 EOF
 }
 
+die-if-running() {
+	PIDF=/tmp/LogosLinuxInstaller.pid
+
+	if [ -f "${PIDF}" ]; then
+		if logos_continue_question "The script is already running on PID $(cat "${PIDF}"). Should it be killed to allow this instance to run?" "The script is already running. Exiting." "1"; then
+			kill -9 "$(cat "${PIDF}")"
+		fi
+	fi
+	trap 'rm -f -- "${PIDF}"' EXIT
+	echo $$ > "${PIDF}"
+}
+
 die-if-root() {
 	if [ "$(id -u)" -eq '0' ] && [ -z "${LOGOS_FORCE_ROOT}" ]; then
 		logos_error "Running Wine/winetricks as root is highly discouraged. Use -f|--force-root if you must run as root. See https://wiki.winehq.org/FAQ#Should_I_run_Wine_as_root.3F"
@@ -72,6 +87,14 @@ die-if-root() {
 verbose() { [[ $VERBOSE = true ]] && return 0 || return 1; };
 
 debug() { [[ $DEBUG = true ]] && return 0 || return 1; };
+
+setDebug() {
+	DEBUG="true";
+	VERBOSE="true";
+	WINEDEBUG="";
+	set -x;
+	echo "Debug mode enabled." >> "${LOGOS_LOG}";
+}
 
 die() { echo >&2 "$*"; exit 1; };
 
@@ -95,29 +118,29 @@ getDialog() {
 			t whiptail && DIALOG=whiptail && break
 			t dialog && DIALOG=dialog && DIALOG_ESCAPE=-- && export DIALOG_ESCAPE && break
 			if test "${XDG_CURRENT_DESKTOP}" != "KDE"; then
-				t zenity && DIALOG=zenity && break
-				t kdialog && DIALOG=kdialog && break
+				t zenity && DIALOG=zenity && GUI=true && break
+				#t kdialog && DIALOG=kdialog && GUI=true && break
 			elif test "${XDG_CURRENT_DESKTOP}" == "KDE"; then
-				t kdialog && DIALOG=kdialog && break
-				t zenity && DIALOG=zenity && break
+				#t kdialog && DIALOG=kdialog && GUI=true && break
+				t zenity && DIALOG=zenity && GUI=true && break
 			else
-				logos_error "No dialog program found. Please install either dialog, whiptail, zenity, or kdialog"
+				echo "No dialog program found. Please install either dialog, whiptail, zenity, or kdialog";
 			fi
 		done;
 	else
-		verbose && echo "Running by double click."
+		verbose && echo "Running by double click." >> "${LOGOS_LOG}"
 		while :; do
 			if test "${XDG_CURRENT_DESKTOP}" != "KDE"; then
-				t zenity && DIALOG=zenity && break
-				t kdialog && DIALOG=kdialog && break
+				t zenity && DIALOG=zenity && GUI=true && break
+				#t kdialog && DIALOG=kdialog && GUI=true && break
 			elif test "${XDG_CURRENT_DESKTOP}" == "KDE"; then
-				t kdialog && DIALOG=kdialog && break
-				t zenity && DIALOG=zenity && break
+				#t kdialog && DIALOG=kdialog && GUI=true && break
+				t zenity && DIALOG=zenity && GUI=true && break
 			else
-				logos_error "No dialog program found. Please install either zenity or kdialog."
+				no-diag-msg "No dialog program found. Please install either zenity or kdialog."
 			fi
 		done;
-	fi; export DIALOG
+	fi; export DIALOG; export GUI;
 }
 
 have_dep() {
@@ -144,6 +167,11 @@ mkdir_critical() {
 }
 
 ## BEGIN DIALOG FUNCTIONS
+no-diag-msg() {
+	echo "${1}" >> "${LOGOS_LOG}";
+	xterm -hold -e printf "%s\n" "${1}";
+	die;
+}
 cli_msg() {
 	printf "%s\n" "${1}"
 }
@@ -164,7 +192,8 @@ logos_info() {
 	if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
 		cli_msg "${INFO_MESSAGE}"
 	elif [[ "${DIALOG}" == "zenity" ]]; then
-		gtk_info "${INFO_MESSAGE}"
+		gtk_info "${INFO_MESSAGE}";
+		echo "$(date) ${INFO_MESSAGE}" >> "${LOGOS_LOG}";
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
 		:
 	fi
@@ -185,7 +214,8 @@ logos_warn() {
 	if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
 	    cli_msg "${WARN_MESSAGE}"
 	elif [[ "${DIALOG}" == "zenity" ]]; then
-	    gtk_warn "${WARN_MESSAGE}"
+		gtk_warn "${WARN_MESSAGE}"
+		echo "$(date) ${WARN_MESSAGE}" >> "${LOGOS_LOG}";
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
 		:
 	fi
@@ -195,15 +225,20 @@ logos_error() {
 	TELEGRAM_LINK="https://t.me/linux_logos"
 	MATRIX_LINK="https://matrix.to/#/#logosbible:matrix.org"
     ERROR_MESSAGE="${1}"
+	SECONDARY="${2}"
 	HELP_MESSAGE="If you need help, please consult:\n\n${WIKI_LINK}\n${TELEGRAM_LINK}\n${MATRIX_LINK}"
 	if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
 	    cli_msg "${ERROR_MESSAGE}\n\n${HELP_MESSAGE}";
 	elif [[ "${DIALOG}" == "zenity" ]]; then
-	    gtk_error "${ERROR_MESSAGE}\n\n${HELP_MESSAGE}";
+		gtk_error "${ERROR_MESSAGE}\n\n${HELP_MESSAGE}";
+		echo "$(date) ${ERROR_MESSAGE}" >> "${LOGOS_LOG}";
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
 		:
 	fi
-	kill -SIGKILL "-$(($(ps -o pgid= -p "${$}")))"
+	if [ -z "${SECONDARY}" ]; then
+		rm /tmp/LogosLinuxInstaller.pid
+		kill -SIGKILL "-$(($(ps -o pgid= -p "${$}")))"
+	fi
 	exit 1;
 }
 cli_question() {
@@ -221,12 +256,13 @@ cli_question() {
 cli_continue_question() {
 	QUESTION_TEXT="${1}"
 	NO_TEXT="${2}"
-	if ! cli_question "${1}"; then logos_error "${2}"; fi
+	SECONDARY="${3}"
+	if ! cli_question "${QUESTION_TEXT}"; then logos_error "${NO_TEXT}" "${SECONDARY}"; fi
 }
 cli_acknowledge_question() {
 	QUESTION_TEXT=${1}
 	NO_TEXT="${2}"
-	if ! cli_question "${1}"; then logos_info "${2}"; fi
+	if ! cli_question "${QUESTION_TEXT}"; then logos_info "${NO_TEXT}"; fi
 }
 gtk_question() {
 	if zenity --question --width=300 --height=200 --text "$@" --title='Question:'
@@ -237,20 +273,22 @@ gtk_question() {
 gtk_continue_question() {
 	QUESTION_TEXT="${1}"
 	NO_TEXT="${2}"
-	if ! gtk_question "$1"; then logos_error "The installation was cancelled!"; fi
+	SECONDARY="${3}"
+	if ! gtk_question "${QUESTION_TEXT}"; then logos_error "The installation was cancelled!" "${SECONDARY}"; fi
 }
 gtk_acknowledge_question() {
 	QUESTION_TEXT="${1}"
 	NO_TEXT=${2}
-	if ! gtk_question "$1"; then logos_info "${2}"; fi
+	if ! gtk_question "${QUESTION_TEXT}"; then logos_info "${NO_TEXT}"; fi
 }
 logos_continue_question() {
 	QUESTION_TEXT="${1}"
 	NO_TEXT=${2}
+	SECONDARY="${3}"
 	if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
-		cli_continue_question "${QUESTION_TEXT}" "${NO_TEXT}"
+		cli_continue_question "${QUESTION_TEXT}" "${NO_TEXT}" "${SECONDARY}"
 	elif [[ "${DIALOG}" == "zenity" ]]; then
-		gtk_continue_question "${QUESTION_TEXT}" "${NO_TEXT}"
+		gtk_continue_question "${QUESTION_TEXT}" "${NO_TEXT}" "${SECONDARY}"
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
 		:
 	fi
@@ -393,9 +431,34 @@ logos_download() {
 	elif [[ "${DIALOG}" == "zenity" ]]; then
 		gtk_download "${URI}" "${DESTINATION}"
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
-		logos_error "kdialog not implemented."
+		no-diag-msg "kdialog not implemented."
 	else
-			logos_error "No dialog tool found."
+		no-diag-msg "No dialog tool found."
+	fi
+}
+logos_reuse_download() {
+	SOURCEURL="${1}"
+	FILE="${2}"
+	TARGETDIR="${3}"
+	DOWNLOADS="${HOME}/Downloads"
+	DIRS=(
+		"${INSTALLDIR}"
+		"${PRESENT_WORKING_DIRECTORY}"
+		"${DOWNLOADS}"
+	)
+	FOUND=1
+	for i in "${DIRS[@]}"; do
+		if [ -f "${i}/${FILE}" ]; then
+			logos_info "${FILE} exists in ${i}. Using it…"
+			cp "${i}/${FILE}" "${TARGETDIR}/" | logos_progress "Copying…" "Copying ${FILE}\ninto ${TARGETDIR}"
+			FOUND=0
+			break
+		fi
+	done
+	if [[ "${FOUND}" == 1 ]]; then
+    	logos_info "${FILE} does not exist. Downloading…"
+    	logos_download "${SOURCEURL}" "${DOWNLOADS}/${FILE}"
+    	cp "${DOWNLOADS}/${FILE}" "${TARGETDIR}/" | logos_progress "Copying…" "Copying: ${FILE}\ninto: ${TARGETDIR}"
 	fi
 }
 ## END DIALOG FUNCTIONS
@@ -501,10 +564,11 @@ chooseProduct() {
 			productChoice="$($DIALOG --backtitle "${BACKTITLE}" --title "${TITLE}" --radiolist "${QUESTION_TEXT}" 0 0 0 "Logos" "Logos Bible Software." ON "Verbum" "Verbum Bible Software." OFF "Exit" "Exit." OFF 3>&1 1>&2 2>&3 3>&-)"
 		elif [[ "${DIALOG}" == "zenity" ]]; then
 			productChoice="$(zenity --width="700" --height="310" --title="${TITLE}" --text="${QUESTION_TEXT}" --list --radiolist --column "S" --column "Description" TRUE "Logos Bible Software." FALSE "Verbum Bible Software." FALSE "Exit.")"
+			#zenity --width="700" --height="310" --title="${TITLE}" --text="${QUESTION_TEXT}" --list --radiolist --column "S" --column "Description" TRUE "Logos Bible Software." FALSE "Verbum Bible Software." FALSE "Exit."
 		elif [[ "${DIALOG}" == "kdialog" ]]; then
-			logos_error "kdialog not implemented."
+			no-diag-msg "kdialog not implemented."
 		else
-			logos_error "No dialog tool found."
+			no-diag-msg "No dialog tool found"
 		fi
 	else
 		productChoice="${FLPRODUCT}"
@@ -541,9 +605,9 @@ chooseVersion() {
 		elif [[ "${DIALOG}" == "zenity" ]]; then
 			versionChoice="$(zenity --width="700" --height="310" --title="${TITLE}" --text="${QUESTION_TEXT}" --list --radiolist --column "S" --column "Description" TRUE "${FLPRODUCT} 10" FALSE "${FLPRODUCT} 9" FALSE "Exit")"
 		elif [[ "${DIALOG}" == "kdialog" ]]; then
-			logos_error "kdialog not implemented."
+			no-diag-msg "kdialog not implemented."
 		else
-			logos_error "No dialog tool found."
+			no-diag-msg "No dialog tool found."
 		fi
 	else
 		versionChoice="$TARGETVERSION"
@@ -632,6 +696,7 @@ checkPath() {
 }
 
 createWineBinaryList() {
+	logos_info "Creating binary list."
 	#TODO: Make optarg to add custom path to this array.
 	WINEBIN_PATH_ARRAY=( "/usr/local/bin" "$HOME/bin" "$HOME/PlayOnLinux/wine/linux-amd64/*/bin" "$HOME/.steam/steam/steamapps/common/Proton - Experimental/files/bin" "${CUSTOMBINPATH}" )
 
@@ -659,17 +724,7 @@ createWineBinaryList() {
 }
 
 getAppImage() {
-	if [ -f "${PRESENT_WORKING_DIRECTORY}/${WINE64_APPIMAGE_FULL_FILENAME}" ]; then
-    	verbose && echo "${WINE64_APPIMAGE_FULL_FILENAME} exists. Using it…"
-		cp "${PRESENT_WORKING_DIRECTORY}/${WINE64_APPIMAGE_FULL_FILENAME}" "${APPDIR_BINDIR}/" | logos_progress "Copying…" "Copying: ${WINE64_APPIMAGE_FULL_FILENAME}\ninto: ${APPDIR_BINDIR}"
-	elif [ -f "${HOME}/Downloads/${WINE64_APPIMAGE_FULL_FILENAME}" ]; then
-    	verbose && echo "${WINE64_APPIMAGE_FULL_FILENAME} exists. Using it…"
-    	cp "${HOME}/Downloads/${WINE64_APPIMAGE_FULL_FILENAME}" "${APPDIR_BINDIR}/" | logos_progress "Copying…" "Copying: ${WINE64_APPIMAGE_FULL_FILENAME}\ninto: ${APPDIR_BINDIR}"
-	else
-    	verbose && echo "${WINE64_APPIMAGE_FULL_FILENAME} does not exist. Downloading…"
-    	logos_download "${WINE64_APPIMAGE_FULL_URL}" "${HOME}/Downloads/${WINE64_APPIMAGE_FULL_FILENAME}"
-    	cp "${HOME}/Downloads/${WINE64_APPIMAGE_FULL_FILENAME}" "${APPDIR_BINDIR}/" | logos_progress "Copying…" "Copying: ${WINE64_APPIMAGE_FULL_FILENAME}\ninto: ${APPDIR_BINDIR}"
-	fi
+	logos_reuse_download "${WINE64_APPIMAGE_FULL_URL}" "${WINE64_APPIMAGE_FULL_FILENAME}" "${APPDIR_BINDIR}"
 }
 
 chooseInstallMethod() {
@@ -682,6 +737,21 @@ chooseInstallMethod() {
 		createWineBinaryList;
 	
 		WINEBIN_OPTIONS=()
+		
+		# Add AppImage to list
+		if [[ "${TARGETVERSION}" != "9" ]]; then
+			if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
+				# NOTE: The missing quotations in this array are intentional and accounted for below.
+				WINEBIN_OPTIONS+=("AppImage ${APPDIR_BINDIR}/${WINE64_APPIMAGE_FULL_FILENAME}" "AppImage of Wine64 ${WINE64_APPIMAGE_FULL_VERSION}" ON)
+			elif [[ "${DIALOG}" == "zenity" ]]; then
+				WINEBIN_OPTIONS+=(TRUE "AppImage" "AppImage of Wine64 ${WINE64_APPIMAGE_FULL_VERSION}" "${APPDIR_BINDIR}/${WINE64_APPIMAGE_FULL_FILENAME}")
+			elif [[ "${DIALOG}" == "kdialog" ]]; then
+				no-diag-msg "kdialog not implemented."
+			else
+				no-diag-msg "No dialog tool found."
+			fi
+		fi
+		
 		while read -r line; do
 			# Set binary code, description, and path based on path
 			if [ -L "$line" ]; then
@@ -692,81 +762,63 @@ chooseInstallMethod() {
 	
 			if [[ "$WINEOPT" == *"/usr/bin/"* ]]; then
 				WINEOPT_CODE="System"
-				WINEOPT_DESCRIPTION="Use system's binary (i.e., /usr/bin/wine64). WINE must be 7.18-staging or later. Stable or Devel do not work."
+				WINEOPT_DESCRIPTION="\"Use the system binary (i.e., /usr/bin/wine64). WINE must be 7.18-staging or later. Stable or Devel do not work.\""
 				WINEOPT_PATH="${line}"
 			elif [[ "$WINEOPT" == *"Proton"* ]]; then
 				WINEOPT_CODE="Proton"
-				WINEOPT_DESCRIPTION="Install using Steam's Proton fork of WINE."
+				WINEOPT_DESCRIPTION="\"Install using the Steam Proton fork of WINE.\""
 				WINEOPT_PATH="${line}"
 			elif [[ "$WINEOPT" == *"PlayOnLinux"* ]]; then
 				WINEOPT_CODE="PlayOnLinux"
-				WINEOPT_DESCRIPTION="Install using a PlayOnLinux WINE64 binary."
+				WINEOPT_DESCRIPTION="\"Install using a PlayOnLinux WINE64 binary.\""
 				WINEOPT_PATH="${line}"
 			else
 				WINEOPT_CODE="Custom"
-				WINEOPT_DESCRIPTION="Use a WINE64 binary from another directory."
+				WINEOPT_DESCRIPTION="\"Use a WINE64 binary from another directory.\""
 				WINEOPT_PATH="${line}"
 			fi
 	
 			# Create wine binary option array
 			if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
-				if [ -z "${WINEBIN_OPTIONS[0]}" ]; then
-					WINEBIN_OPTIONS+=("${WINEOPT_CODE} ${WINEOPT_PATH}" "${WINEOPT_DESCRIPTION}" ON)
-				else
-					WINEBIN_OPTIONS+=("${WINEOPT_CODE} ${WINEOPT_PATH}" "${WINEOPT_DESCRIPTION}" OFF)
-				fi
+				# NOTE: The missing quotations in this array are intentional and accounted for below.
+				WINEBIN_OPTIONS+=("${WINEOPT_CODE} ${WINEOPT_PATH}" "${WINEOPT_DESCRIPTION}" OFF)
 			elif [[ "${DIALOG}" == "zenity" ]]; then
-				if [ -z "${WINEBIN_OPTIONS[0]}" ]; then
-					WINEBIN_OPTIONS+=(TRUE "${WINEOPT_CODE}" "${WINEOPT_DESCRIPTION}" "${WINEOPT_PATH}")
-				else
-					WINEBIN_OPTIONS+=(FALSE "${WINEOPT_CODE}" "${WINEOPT_DESCRIPTION}" "${WINEOPT_PATH}")
-				fi
+				WINEBIN_OPTIONS+=(FALSE "${WINEOPT_CODE}" "${WINEOPT_DESCRIPTION}" "${WINEOPT_PATH}")
 			elif [[ "${DIALOG}" == "kdialog" ]]; then
-				logos_error "kdialog not implemented."
+				no-diag-msg "kdialog not implemented."
 			else
-				logos_error "No dialog tool found."
+				no-diag-msg "No dialog tool found."
 			fi
 		done < "${WORKDIR}/winebinaries"
 	
-		# Add AppImage to list
-		if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
-			WINEBIN_OPTIONS+=("AppImage" "${APPDIR_BINDIR}/${WINE64_APPIMAGE_FULL_FILENAME}" OFF)
-		elif [[ "${DIALOG}" == "zenity" ]]; then
-			WINEBIN_OPTIONS+=(FALSE "AppImage" "AppImage of Wine64 ${WINE64_APPIMAGE_FULL_VERSION}" "${APPDIR_BINDIR}/${WINE64_APPIMAGE_FULL_FILENAME}")
-		elif [[ "${DIALOG}" == "kdialog" ]]; then
-			logos_error "kdialog not implemented."
-		else
-			logos_error "No dialog tool found."
-		fi
 	
 		BACKTITLE="Choose Wine Binary Menu"
 		TITLE="Choose Wine Binary"
 		QUESTION_TEXT="Which Wine binary and install method should the script use to install ${FLPRODUCT} v${LOGOS_VERSION} in ${INSTALLDIR}?"
-		column_names=(--column "Choice" --column "Code" --column "Description" --column "Path")
+		WINEBIN_OPTIONS_LENGTH="${#WINEBIN_OPTIONS[@]}"
 		if [[ "${DIALOG}" == "whiptail" ]] || [[ "${DIALOG}" == "dialog" ]]; then
-			installationChoice="$($DIALOG --backtitle "${BACKTITLE}" --title "${TITLE}" --radiolist "${QUESTION_TEXT}" 0 0 0 "${WINEBIN_OPTIONS[@]}" 3>&1 1>&2 2>&3 3>&-)"
+			installationChoice=$( $DIALOG --backtitle "${BACKTITLE}" --title "${TITLE}" --radiolist "${QUESTION_TEXT}" 0 0 "${WINEBIN_OPTIONS_LENGTH}" "${WINEBIN_OPTIONS[@]}" 3>&1 1>&2 2>&3 3>&- )
 			read -r -a installArray <<< "${installationChoice}"
-			WINEBIN_CODE=$(echo "${installArray[0]}" | awk -F' ' '{print $1}')
-			WINE_EXE=$(echo "${installArray[0]}" | awk -F' ' '{print $2}')
-			export WINEBIN_CODE;
-			export WINE_EXE;
+			WINEBIN_CODE=$(echo "${installArray[0]}" | awk -F' ' '{print $1}'); export WINEBIN_CODE
+			WINE_EXE=$(echo "${installArray[0]}" | awk -F' ' '{print $2}'); export WINE_EXE
 		elif [[ "${DIALOG}" == "zenity" ]]; then
-			installationChoice="$(zenity --width=1024 --height=480 \
+			column_names=(--column "Choice" --column "Code" --column "Description" --column "Path")
+			installationChoice=$(zenity --width=1024 --height=480 \
 				--title="${TITLE}" \
 				--text="${QUESTION_TEXT}" \
-				--list --radiolist "${column_names[@]}" "${WINEBIN_OPTIONS[@]}" --print-column=2,3,4)";
+				--list --radiolist "${column_names[@]}" "${WINEBIN_OPTIONS[@]}" --print-column=2,3,4);
 			OIFS=$IFS
 			IFS='|' read -r -a installArray <<< "${installationChoice}"
 			IFS=$OIFS
 			export WINEBIN_CODE=${installArray[0]}
 			export WINE_EXE=${installArray[2]}
 		elif [[ "${DIALOG}" == "kdialog" ]]; then
-			logos_error "kdialog not implemented."
+			no-diag-msg "kdialog not implemented."
 		else
-			logos_error "No dialog tool found."
+			no-diag-msg "No dialog tool found."
 		fi
 	fi
-	verbose && echo "${WINE_EXE}"
+	verbose && echo "chooseInstallMethod(): WINEBIN_CODE: ${WINEBIN_CODE}; WINE_EXE: ${WINE_EXE}"
 }
 
 checkExistingInstall() {
@@ -792,12 +844,6 @@ beginInstall() {
 	fi
 	if [ -n "${WINEBIN_CODE}" ]; then	
 		case "${WINEBIN_CODE}" in
-			"System"|"Proton"|"PlayOnLinux"|"Custom")
-				verbose && echo "Installing ${FLPRODUCT} Bible ${TARGETVERSION} using a ${WINEBIN_CODE} WINE64 binary…"
-				if [ -z "${REGENERATE}" ]; then
-					make_skel "none.AppImage"
-				fi
-				;;
 			"AppImage"*)
 				check_libs libfuse;
 				verbose && echo "Installing ${FLPRODUCT} Bible ${TARGETVERSION} using ${WINE64_APPIMAGE_FULL_VERSION} AppImage…"
@@ -811,10 +857,17 @@ beginInstall() {
 					# Geting the AppImage:
 					getAppImage;	
 					chmod +x "${APPDIR_BINDIR}/${WINE64_APPIMAGE_FULL_FILENAME}"
+					export WINE_EXE="${APPDIR_BINDIR}/wine64"
+				fi
+				;;
+			"System"|"Proton"|"PlayOnLinux"|"Custom")
+				verbose && echo "Installing ${FLPRODUCT} Bible ${TARGETVERSION} using a ${WINEBIN_CODE} WINE64 binary…"
+				if [ -z "${REGENERATE}" ]; then
+					make_skel "none.AppImage"
 				fi
 				;;
 			*)
-				logos_error "WINEBINE_CODE error. Installation canceled!"
+				logos_error "WINEBIN_CODE error. Installation canceled!"
 		esac
 	else
 		verbose && echo "WINEBIN_CODE is not set in your config file."
@@ -854,17 +907,7 @@ wine_reg_install() {
 }
 
 downloadWinetricks() {
-	verbose && echo "Downloading winetricks from the Internet…"
-	if [ -f "${PRESENT_WORKING_DIRECTORY}/winetricks" ]; then
-		verbose && echo "A winetricks binary has already been downloaded. Using it…"
-		cp "${PRESENT_WORKING_DIRECTORY}/winetricks" "${APPDIR_BINDIR}"
-	elif [ -f "${HOME}/Downloads/winetricks" ]; then
-		verbose && echo "A winetricks binary has already been downloaded. Using it…"
-		cp "${HOME}/Downloads/winetricks" "${APPDIR_BINDIR}"
-	else
-		verbose && echo "winetricks does not exist. Downloading…"
-		logos_download "${WINETRICKS_URL}" "${APPDIR_BINDIR}"
-	fi
+	logos_reuse_download "${WINETRICKS_URL}" "winetricks" "${APPDIR_BINDIR}"
 	chmod 755 "${APPDIR_BINDIR}/winetricks"
 }
 
@@ -888,9 +931,9 @@ setWinetricks() {
 						TRUE "1- Use local winetricks." \
 						FALSE "2- Download winetricks from the Internet." )"
 				elif [[ "${DIALOG}" == "kdialog" ]]; then
-					logos_error "kdialog not implemented."
+					no-diag-msg "kdialog not implemented."
 				else
-					logos_error "No dialog tool found."
+					no-diag-msg "No dialog tool found."
 				fi
 
 				case "${winetricksChoice}" in
@@ -954,9 +997,9 @@ winetricks_install() {
 			logos_error "The installation was cancelled!\n * ZENITY_RETURN: ${ZENITY_RETURN}";
 		fi
 	elif [[ "${DIALOG}" == "kdialog" ]]; then
-		logos_error "kdialog not implemented."
+		no-diag-msg "kdialog not implemented."
 	else
-		logos_error "No dialog tool found."
+		no-diag-msg "No dialog tool found."
 	fi
 
 	verbose && echo "winetricks ${*} DONE!";
@@ -973,18 +1016,8 @@ winetricks_dll_install() {
 }
 
 getPremadeWineBottle() {
-	# get and install pre-made wineBottle
-	WINE64_BOTTLE_TARGZ_URL="https://github.com/ferion11/wine64_bottle_dotnet/releases/download/v5.11b/wine64_bottle.tar.gz"
-	WINE64_BOTTLE_TARGZ_NAME="wine64_bottle.tar.gz"
 	verbose && echo "Installing pre-made wineBottle 64bits…"
-	if [ -f "${PRESENT_WORKING_DIRECTORY}/${WINE64_BOTTLE_TARGZ_NAME}" ]; then
-		verbose && echo "${WINE64_BOTTLE_TARGZ_NAME} exist. Using it…"
-		cp "${PRESENT_WORKING_DIRECTORY}/${WINE64_BOTTLE_TARGZ_NAME}" "${WORKDIR}/" | zenity --progress --title="Copying…" --text="Copying: ${WINE64_BOTTLE_TARGZ_NAME}\ninto: ${WORKDIR}" --pulsate --auto-close --no-cancel
-	else
-		verbose && echo "${WINE64_BOTTLE_TARGZ_NAME} does not exist. Downloading…"
-		logos_download "${WINE64_BOTTLE_TARGZ_URL}" "${WORKDIR}"
-	fi
-
+	logos_reuse_download "${WINE64_BOTTLE_TARGZ_URL}" "${WINE64_BOTTLE_TARGZ_NAME}" "${WORKDIR}"
 	tar xzf "${WORKDIR}"/"${WINE64_BOTTLE_TARGZ_NAME}" -C "${APPDIR}"/ | logos_progress "Extracting…" "Extracting: ${WINE64_BOTTLE_TARGZ_NAME}\ninto: ${APPDIR}"
 }
 ## END WINE BOTTLE AND WINETRICKS FUNCTIONS
@@ -1206,51 +1239,55 @@ postInstall() {
 		logos_error "Installation failed. ${LOGOS_EXE} not found. Exiting…\n\nThe ${FLPRODUCT} executable was not found. This means something went wrong while installing ${FLPRODUCT}. Please contact the Logos on Linux community for help."
 	fi
 }
-# END FUNCTION DECLARATIONS
 
 main() {
-	echo "$LOGOS_SCRIPT_TITLE, $LOGOS_SCRIPT_VERSION by $LOGOS_SCRIPT_AUTHOR."
-	debug && logos_info "Debug mode enabled."
-
+	{ echo "$LOGOS_SCRIPT_TITLE, $LOGOS_SCRIPT_VERSION by $LOGOS_SCRIPT_AUTHOR.";
 	# BEGIN PREPARATION
-	checkDependencies; # We verify the user is running a graphical UI and has majority of required dependencies.
-	chooseProduct; # We ask user for his Faithlife product's name and set variables.
-	chooseVersion; # We ask user for his Faithlife product's version, set variables, and create project skeleton.
-	chooseInstallMethod; # We ask user for his desired install method.
+	verbose && date; checkDependencies; # We verify the user is running a graphical UI and has majority of required dependencies.
+	verbose && date; chooseProduct; # We ask user for his Faithlife product's name and set variables.
+	verbose && date; chooseVersion; # We ask user for his Faithlife product's version, set variables, and create project skeleton.
+	verbose && date; chooseInstallMethod; # We ask user for his desired install method.
 	# END PREPARATION
 	if [ -z "${REGENERATE}" ]; then
-		checkExistingInstall;
-		beginInstall;
-		prepareWineBottle; # We run wineboot.
+		verbose && date; checkExistingInstall;
+		verbose && date; beginInstall;
+		verbose && date; prepareWineBottle; # We run wineboot.
 		case "${TARGETVERSION}" in
 			10*)
-				installLogos10; ;; # We run the commands specific to Logos 10.
+				verbose && date; installLogos10; ;; # We run the commands specific to Logos 10.
 			9*)
-				installLogos9; ;; # We run the commands specific to Logos 9.
+				verbose && date; installLogos9; ;; # We run the commands specific to Logos 9.
 			*)
 				logos_error "Installation canceled!" ;;
 		esac
 
+		verbose && date;
 		create_starting_scripts;
 		heavy_wineserver_wait;
 		clean_all;
 
 		LOGOS_EXE=$(find "${WINEPREFIX}" -name ${FLPRODUCT}.exe | grep "${FLPRODUCT}/${FLPRODUCT}.exe"); export LOGOS_EXE;
 
-		postInstall;
+		verbose && date; postInstall;
 	else
 		create_starting_scripts;
 		logos_info "The scripts have been regenerated."
 	fi
+	} | tee -a "${LOGOS_LOG}";
 }
+# END FUNCTION DECLARATIONS
 
-# BEGIN SCRIPT
-
-die-if-root;
-
+# BEGIN SCRIPT EXECUTION
 if [ -z "${DIALOG}" ]; then
 	getDialog;
+	if test "${GUI}" == "true"; then
+		echo "Running in a GUI. Enabling logging." >> "${LOGOS_LOG}"
+		setDebug;
+	fi
 fi
+
+die-if-running;
+die-if-root;
 
 # BEGIN OPTARGS
 RESET_OPTARGS=true
@@ -1310,8 +1347,8 @@ while getopts "$OPTSTRING" opt; do
 		F)  export SKIP_FONTS="1" ;;
 		f)  export LOGOS_FORCE_ROOT="1"; ;;
 		r)  export REGENERATE="1"; ;;
-		D)  export DEBUG="true";
-			WINEDEBUG=""; ;;
+		D)  export setDebug;
+			;;
 		k)  export SKEL="1"; ;;
 		b)  CUSTOMBINPATH="$2";
 			if [ -d "$CUSTOMBINPATH" ]; then
@@ -1344,5 +1381,5 @@ shift $((OPTIND-1))
 main;
 
 exit 0;
-
+# END SCRIPT EXECUTION
 
